@@ -1,0 +1,20 @@
+{
+  "name": "happy-womans-day-26",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "livekit-client": "^2.17.2",
+    "phaser": "^3.90.0",
+    "playroomkit": "^0.0.95"
+  }
+}

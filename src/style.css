@@ -1,0 +1,85 @@
+body {
+  margin: 0;
+  background-color: #0f1020;
+  color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+#game {
+  width: 100%;
+  height: 100%;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(1200px 600px at 50% 30%, rgba(255, 192, 203, 0.18), transparent 60%),
+    rgba(0, 0, 0, 0.55);
+  z-index: 10;
+}
+
+.card {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 35, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.card h1 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.card p {
+  margin: 0 0 16px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row input {
+  flex: 1;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 12px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  outline: none;
+}
+
+.row input:focus {
+  border-color: rgba(255, 192, 203, 0.8);
+}
+
+.row button {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 192, 203, 0.45);
+  padding: 12px 14px;
+  background: rgba(255, 192, 203, 0.22);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.row button:hover {
+  background: rgba(255, 192, 203, 0.3);
+}
+
