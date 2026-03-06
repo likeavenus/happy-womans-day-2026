@@ -1,221 +1,151 @@
-// // PlayroomNetworkManager.ts - БЕЗ ОШИБОК ИМПОРТА
-// import * as Playroom from "playroomkit";
-
-// export type RemotePlayerState = {
-//   id: string;
-//   name: string;
-//   anim: "idle" | "run" | "jump";
-//   flipX: boolean;
-//   x: number;
-//   y: number;
-//   coins: number;
-// };
-
-// type StateListener = (state: RemotePlayerState) => void;
-// type LeaveListener = (id: string) => void;
-// type CoinPickedListener = (coinId: number, by: string) => void;
-// type BossDefeatedListener = () => void;
-
-// export class PlayroomNetworkManager {
-//   name: string;
-//   private stateListeners: StateListener[] = [];
-//   private leaveListeners: LeaveListener[] = [];
-//   private coinPickedListeners: CoinPickedListener[] = [];
-//   private bossDefeatedListeners: BossDefeatedListener[] = [];
-//   private pickedCoins = new Set<number>();
-//   private remotePlayers = new Map<string, any>();
-
-//   constructor(name: string) {
-//     this.name = name;
-
-//     // PlayroomKit сразу доступен через глобал
-//     if (typeof window !== "undefined" && (window as any).Playroom) {
-//       this.init();
-//     } else {
-//       // Fallback для Vite HMR
-//       window.addEventListener("load", () => this.init());
-//     }
-//   }
-
-//   private init() {
-//     const Playroom = (window as any).Playroom;
-
-//     Playroom.onPlayerJoin((player: any) => {
-//       if (player.id === Playroom.myPlayer()?.id) return;
-
-//       this.remotePlayers.set(player.id, player);
-
-//       player.onQuit(() => {
-//         this.leaveListeners.forEach((cb) => cb(player.id));
-//         this.remotePlayers.delete(player.id);
-//       });
-
-//       player.onStateChange((state: any) => {
-//         const remoteState: RemotePlayerState = {
-//           id: player.id,
-//           name: player.getProfile().name || this.name,
-//           anim: state.anim || "idle",
-//           flipX: !!state.flipX,
-//           x: state.x || 0,
-//           y: state.y || 0,
-//           coins: state.coins || 0,
-//         };
-//         this.stateListeners.forEach((cb) => cb(remoteState));
-//       });
-//     });
-//   }
-
-//   onRemoteState(listener: StateListener) {
-//     this.stateListeners.push(listener);
-//   }
-//   onRemoteLeave(listener: LeaveListener) {
-//     this.leaveListeners.push(listener);
-//   }
-//   onCoinPicked(listener: CoinPickedListener) {
-//     this.coinPickedListeners.push(listener);
-//   }
-//   onBossDefeated(listener: BossDefeatedListener) {
-//     this.bossDefeatedListeners.push(listener);
-//   }
-
-//   sendStateUpdate(state: Omit<RemotePlayerState, "id">) {
-//     const Playroom = (window as any).Playroom;
-//     Playroom.myPlayer()?.setState(state);
-//   }
-
-//   requestCoinPickup(coinId: number) {
-//     if (this.pickedCoins.has(coinId)) return;
-//     this.pickedCoins.add(coinId);
-//     const Playroom = (window as any).Playroom;
-//     Playroom.insertCoin({ type: "coinPicked", coinId, by: Playroom.myPlayer()?.id });
-//   }
-
-//   announceBossDefeated() {
-//     const Playroom = (window as any).Playroom;
-//     Playroom.insertCoin({ type: "bossDefeated" });
-//   }
-
-//   getPlayersSnapshot() {
-//     const Playroom = (window as any).Playroom;
-//     const players: Array<{ id: string; name: string; coins: number }> = [];
-
-//     // Собираем из всех игроков
-//     Playroom.onPlayerJoin((player: any) => {
-//       players.push({
-//         id: player.id,
-//         name: player.getProfile().name || "Player",
-//         coins: player.getState()?.coins || 0,
-//       });
-//     });
-
-//     return players.sort((a, b) => b.coins - a.coins);
-//   }
-// }
-// LivekitNetworkManager.ts - PlayroomKit wrapper
 export type RemotePlayerState = {
   id: string;
   name: string;
-  anim: "idle" | "run" | "jump";
-  flipX: boolean;
   x: number;
   y: number;
+  anim: string;
+  flipX: boolean;
   coins: number;
 };
 
-type StateListener = (state: RemotePlayerState) => void;
-type LeaveListener = (id: string) => void;
-type CoinPickedListener = (coinId: number, by: string) => void;
-type BossDefeatedListener = () => void;
+export type FireballData = {
+  id: string; // уникальный id для фаербола (можно генерировать)
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: string;
+};
 
-export class PlayroomNetworkManager {
-  name: string;
-  private stateListeners: StateListener[] = [];
-  private leaveListeners: LeaveListener[] = [];
-  private coinPickedListeners: CoinPickedListener[] = [];
-  private bossDefeatedListeners: BossDefeatedListener[] = [];
-  private pickedCoins = new Set<number>();
+type PlayerStateCallback = (s: RemotePlayerState) => void;
+type BossCallback = () => void;
+type LeaveCallback = (playerId: string) => void;
+type CoinCallback = (coinId: string, playerId: string) => void;
 
-  constructor(name: string) {
-    this.name = name;
+export class LivekitNetworkManager {
+  private stateListeners: PlayerStateCallback[] = [];
+  private coinListeners: CoinCallback[] = [];
+  private bossListeners: BossCallback[] = [];
+  private leaveListeners: LeaveCallback[] = [];
+  private players = new Map<string, { name: string; coins: number }>(); // для статистики
+  private fireballListeners: ((fb: FireballData) => void)[] = [];
+  private playroom: any;
+  private bossHitListeners: ((damage: number) => void)[] = [];
 
-    // Инициализация ТОЛЬКО когда PlayroomKit готов
-    this.waitForPlayroom().then(() => {
-      this.setupPlayroom();
-    });
-  }
-
-  private waitForPlayroom() {
-    return new Promise<void>((resolve) => {
-      if ((window as any).Playroom) {
-        resolve();
-        return;
-      }
-
-      const check = () => {
-        if ((window as any).Playroom) {
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
-  }
-
-  private setupPlayroom() {
+  constructor() {
     const Playroom = (window as any).Playroom;
+    this.playroom = Playroom;
 
-    Playroom.onPlayerJoin((player: any) => {
-      if (player.id === Playroom.myPlayer()?.id) return;
+    // ===== ДВИЖЕНИЕ (SNAPSHOT) =====
+    Playroom.RPC.register("playerSnapshot", (data: RemotePlayerState) => {
+      console.log("📥 RPC SNAPSHOT", data);
+      this.stateListeners.forEach((cb) => cb(data));
+    });
 
-      player.onQuit(() => {
+    // ===== МОНЕТЫ =====
+    // Playroom.RPC.register("coinPicked", (coinId: string) => {
+    //   console.log("🪙 RPC coinPicked", coinId);
+    //   this.coinListeners.forEach((cb) => cb(coinId));
+    // });
+    Playroom.RPC.register("coinPicked", (data: { coinId: string; playerId: string }) => {
+      console.log("🪙 RPC coinPicked", data);
+      this.coinListeners.forEach((cb) => cb(data.coinId, data.playerId));
+    });
+
+    // ===== БОСС =====
+    Playroom.RPC.register("bossDefeated", () => {
+      console.log("👑 RPC bossDefeated");
+      this.bossListeners.forEach((cb) => cb());
+    });
+
+    // ===== УХОД ИГРОКА =====
+    if (typeof Playroom.onPlayerLeave === "function") {
+      Playroom.onPlayerLeave((player: any) => {
+        console.log("🚪 PLAYER LEFT", player.id);
         this.leaveListeners.forEach((cb) => cb(player.id));
       });
+    } else {
+      console.warn("Playroom.onPlayerLeave is not a function — player leave events won't be handled.");
+    }
 
-      player.onStateChange((state: any) => {
-        const remoteState: RemotePlayerState = {
-          id: player.id,
-          name: player.getProfile().name || this.name,
-          anim: state.anim || "idle",
-          flipX: !!state.flipX,
-          x: state.x || 0,
-          y: state.y || 0,
-          coins: state.coins || 0,
-        };
-        this.stateListeners.forEach((cb) => cb(remoteState));
-      });
+    Playroom.RPC.register("fireballSpawn", (data: FireballData) => {
+      this.fireballListeners.forEach((cb) => cb(data));
+    });
+
+    Playroom.RPC.register("bossHit", (damage: number) => {
+      this.bossHitListeners.forEach((cb) => cb(damage));
     });
   }
 
-  onRemoteState = (listener: StateListener) => this.stateListeners.push(listener);
-  onRemoteLeave = (listener: LeaveListener) => this.leaveListeners.push(listener);
-  onCoinPicked = (listener: CoinPickedListener) => this.coinPickedListeners.push(listener);
-  onBossDefeated = (listener: BossDefeatedListener) => this.bossDefeatedListeners.push(listener);
-
-  sendStateUpdate(state: Omit<RemotePlayerState, "id">) {
-    (window as any).Playroom?.myPlayer()?.setState(state);
+  // =========================
+  // ДВИЖЕНИЕ
+  // =========================
+  onRemoteState(cb: PlayerStateCallback) {
+    this.stateListeners.push(cb);
   }
 
-  requestCoinPickup(coinId: number) {
-    if (this.pickedCoins.has(coinId)) return;
-    this.pickedCoins.add(coinId);
-    (window as any).Playroom?.insertCoin({ type: "coinPicked", coinId, by: (window as any).Playroom?.myPlayer()?.id });
+  sendSnapshot(state: RemotePlayerState) {
+    const Playroom = (window as any).Playroom;
+    console.log("📤 RPC SNAPSHOT", state);
+    Playroom.RPC.call("playerSnapshot", state);
   }
 
-  announceBossDefeated() {
-    (window as any).Playroom?.insertCoin({ type: "bossDefeated" });
+  // =========================
+  // МОНЕТЫ
+  // =========================
+  onCoinPicked(cb: CoinCallback) {
+    this.coinListeners.push(cb);
+  }
+
+  // sendCoinPicked(coinId: string) {
+  //   const Playroom = (window as any).Playroom;
+  //   console.log("📤 RPC coinPicked", coinId);
+  //   Playroom.RPC.call("coinPicked", coinId);
+  // }
+  sendCoinPicked(coinId: string, playerId: string) {
+    const Playroom = (window as any).Playroom;
+    console.log("📤 RPC coinPicked", { coinId, playerId });
+    Playroom.RPC.call("coinPicked", { coinId, playerId });
+  }
+
+  // =========================
+  // БОСС
+  // =========================
+  onBossDefeated(cb: BossCallback) {
+    this.bossListeners.push(cb);
+  }
+
+  sendBossDefeated() {
+    const Playroom = (window as any).Playroom;
+    console.log("📤 RPC bossDefeated");
+    Playroom.RPC.call("bossDefeated");
+  }
+
+  onRemoteLeave(cb: LeaveCallback) {
+    this.leaveListeners.push(cb);
   }
 
   getPlayersSnapshot() {
-    const Playroom = (window as any).Playroom;
-    const players: Array<{ id: string; name: string; coins: number }> = [];
-    Playroom?.allPlayers?.()?.forEach((player: any) => {
-      players.push({
-        id: player.id,
-        name: player.getProfile().name || "Player",
-        coins: player.getState()?.coins || 0,
-      });
-    });
-    return players.sort((a, b) => b.coins - a.coins);
+    return Array.from(this.players.entries()).map(([id, data]) => ({
+      id,
+      name: data.name,
+      coins: data.coins,
+    }));
+  }
+
+  onFireballSpawn(cb: (fb: FireballData) => void) {
+    this.fireballListeners.push(cb);
+  }
+
+  sendFireball(data: FireballData) {
+    this.playroom.RPC.call("fireballSpawn", data);
+  }
+
+  onBossHit(cb: (damage: number) => void) {
+    this.bossHitListeners.push(cb);
+  }
+
+  sendBossHit(damage: number) {
+    this.playroom.RPC.call("bossHit", damage);
   }
 }
