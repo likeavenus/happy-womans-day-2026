@@ -47,9 +47,9 @@ export class MainScene extends Phaser.Scene {
     y: 0,
     coins: 0,
   };
-  private readonly playerScale = 0.3;
+  private readonly playerScale = 0.2;
   private readonly bodyH = 90;
-  private readonly jumpVelocity = -10.5;
+  private readonly jumpVelocity = -15;
 
   constructor() {
     super("MainScene");
@@ -304,14 +304,24 @@ export class MainScene extends Phaser.Scene {
         const gameObjectA = (bodyA as MatterJS.Body).gameObject;
         const gameObjectB = (bodyB as MatterJS.Body).gameObject;
 
-        // Фаербол с боссом
-        if ((gameObjectA === this.boss && gameObjectB?.getData("owner")) || (gameObjectB === this.boss && gameObjectA?.getData("owner"))) {
-          const fireball = gameObjectA === this.boss ? gameObjectB : gameObjectA;
-          // Уничтожаем фаербол локально
-          this.destroyFireball(fireball);
-          // Если владелец — текущий игрок, отправляем урон
-          if (fireball.getData("owner") === this.network.myId) {
-            this.network.sendBossHit(1);
+        // Определяем, есть ли среди столкнувшихся объектов фаербол
+        let fireballObj: Phaser.Physics.Matter.Sprite | null = null;
+        if (gameObjectA?.getData("owner") !== undefined) fireballObj = gameObjectA;
+        else if (gameObjectB?.getData("owner") !== undefined) fireballObj = gameObjectB;
+
+        if (fireballObj) {
+          this.destroyFireball(fireballObj); // уничтожаем при любом столкновении
+        }
+
+        let emojiObj: Phaser.Physics.Matter.Image | null = null;
+        if (gameObjectA?.getData("type") === "emoji") emojiObj = gameObjectA;
+        else if (gameObjectB?.getData("type") === "emoji") emojiObj = gameObjectB;
+
+        if (emojiObj) {
+          if (gameObjectA === this.player || gameObjectB === this.player) {
+            this.hitPlayer(emojiObj); // попадание в игрока
+          } else {
+            this.destroyEmoji(emojiObj); // столкновение с чем-то другим
           }
         }
       });
@@ -319,11 +329,30 @@ export class MainScene extends Phaser.Scene {
 
     this.network.onFireballSpawn((data) => {
       // Создаём фаербол на стороне других игроков
-      const fireball = this.matter.add.sprite(data.x, data.y, "fireball-1").setScale(0.5).setCircle(12).setFixedRotation().play("fireball");
+      const fireball = this.matter.add
+        .sprite(data.x, data.y, "fireball-1")
+        .setScale(0.5)
+        .setCircle(12)
+        .setFixedRotation()
+        .setIgnoreGravity(true)
+        .play("fireball");
       fireball.setVelocity(data.vx, data.vy);
       fireball.setData("owner", data.owner);
       fireball.setData("id", data.id);
       this.fireballs.push(fireball);
+
+      this.time.delayedCall(5000, () => {
+        if (fireball.scene) {
+          this.destroyFireball(fireball, false); // false – не отправляем RPC (создатель уже отправил)
+        }
+      });
+    });
+
+    this.network.onFireballDestroy((id) => {
+      const fireball = this.fireballs.find((fb) => fb.getData("id") === id);
+      if (fireball) {
+        this.destroyFireball(fireball, false); // false – не отправлять RPC повторно
+      }
     });
 
     this.network.onBossHit((damage) => {
@@ -435,7 +464,7 @@ export class MainScene extends Phaser.Scene {
 
     const bossX = worldWidth - 200;
     const bossY = groundTopY - 150; // чуть выше земли
-    this.boss = this.matter.add.sprite(bossX, bossY, "boss").setOrigin(0.5, 1).setScale(0.5).setFixedRotation();
+    this.boss = this.matter.add.sprite(bossX, bossY, "boss").setOrigin(0.5, 0.5).setScale(0.5).setFixedRotation();
     this.boss.setStatic(true); // пока не двигаем
     this.bossHP = 5;
     this.bossActive = false;
@@ -511,6 +540,9 @@ export class MainScene extends Phaser.Scene {
     if (now - this.lastNetSend > 80) {
       this.lastNetSend = now;
 
+      const myProfile = (window as any).Playroom?.myPlayer()?.getProfile();
+      const myName = myProfile?.name || "Игрок";
+
       this.network.sendSnapshot({
         id: (window as any).Playroom.myPlayer().id,
         x: this.player.x,
@@ -518,7 +550,33 @@ export class MainScene extends Phaser.Scene {
         anim,
         flipX: this.player.flipX,
         coins: this.money,
+        name: myName,
       });
+
+      if (this.boss && this.bossHP > 0) {
+        const distToPlayer = Phaser.Math.Distance.Between(this.boss.x, this.boss.y, this.player.x, this.player.y);
+        if (!this.bossActive && distToPlayer < 300) {
+          this.bossActive = true;
+        }
+
+        if (this.bossActive) {
+          this.bossAttackTimer += this.game.loop.delta;
+          if (this.bossAttackTimer >= 800) {
+            this.bossAttackTimer = 0;
+            this.spawnEmoji();
+          }
+        }
+
+        if (this.bossInvincible) {
+          this.bossInvincibleTimer -= this.game.loop.delta;
+          if (this.bossInvincibleTimer <= 0) {
+            this.bossInvincible = false;
+            this.boss.clearTint();
+          }
+        }
+      }
+
+      this.updateBossHealthBar();
     }
 
     // =========================
@@ -663,7 +721,7 @@ export class MainScene extends Phaser.Scene {
     this.bossHealthBarBg.fillRect(x, y, barWidth, barHeight);
 
     this.bossHealthBar.clear();
-    this.bossHealthBar.fillStyle(0xff0000, 1);
+    this.bossHealthBar.fillStyle(0x00ff00, 1);
     const healthPercent = this.bossHP / 5; // максимум 5 HP
     this.bossHealthBar.fillRect(x, y, barWidth * healthPercent, barHeight);
   }
@@ -676,11 +734,14 @@ export class MainScene extends Phaser.Scene {
     // Создаём спрайт фаербола как физическое тело
     const fireball = this.matter.add.sprite(startX, startY, "fireball-1").setScale(0.5).setCircle(12).setFixedRotation().play("fireball");
 
+    const fireballId = Phaser.Math.RND.uuid();
     fireball.setVelocity(dir * 10, 0); // летит горизонтально
     fireball.setData("owner", this.network.myId); // запоминаем владельца
+    console.log("this.network.myId: ", this.network.myId);
 
     // Отправляем по сети информацию о новом фаерболе
     this.network.sendFireball({
+      id: fireballId,
       x: startX,
       y: startY,
       vx: dir * 10,
@@ -691,6 +752,13 @@ export class MainScene extends Phaser.Scene {
     // Добавляем в локальный массив для отслеживания
     // (можно хранить все фаерболы в одном массиве, различая по владельцу)
     this.fireballs.push(fireball);
+
+    this.time.delayedCall(6000, () => {
+      if (fireball.scene) {
+        // проверяем, что ещё существует
+        this.destroyFireball(fireball, true);
+      }
+    });
   }
 
   private defeatBoss() {
@@ -698,5 +766,29 @@ export class MainScene extends Phaser.Scene {
     this.boss.destroy();
     this.network.sendBossDefeated();
     // Показываем результаты локально (RPC вызовет showResults у всех)
+  }
+
+  private destroyFireball(fireball: Phaser.Physics.Matter.Sprite, sendRpc: boolean = true) {
+    if (!fireball || fireball.scene !== this) return; // уже уничтожен
+    const idx = this.fireballs.indexOf(fireball);
+    if (idx !== -1) this.fireballs.splice(idx, 1);
+    if (sendRpc) {
+      const id = fireball.getData("id");
+      if (id) this.network.sendFireballDestroy(id);
+    }
+    fireball.destroy();
+  }
+
+  private hitPlayer(emoji: Phaser.Physics.Matter.Image) {
+    if (this.playerInvincible) return;
+    this.playerInvincible = true;
+    this.playerInvincibleTimer = 2000; // 2 секунды неуязвимости
+    this.player.setTint(0xffaaaa);
+
+    // Отбрасывание в направлении от эмодзи
+    const dir = new Phaser.Math.Vector2(this.player.x - emoji.x, this.player.y - emoji.y).normalize();
+    this.player.setVelocity(dir.x * 10, dir.y * 10 - 5);
+
+    this.destroyEmoji(emoji);
   }
 }
